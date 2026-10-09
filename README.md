@@ -30,7 +30,13 @@ This fork differs from `mgoltzsche/conventional-release` in the following ways.
   range, resolves it with plain `git`, and groups commits into **Breaking
   Changes / Features / Bug Fixes / Performance / Other Changes**. Commits that
   do not follow Conventional Commits are listed under Other Changes rather than
-  dropped.
+  dropped. A collapsed **Commit history** table with every commit, its author
+  and a link to the diff is appended, and commits from automation accounts are
+  kept out of the grouped sections (see `EXCLUDE_AUTHORS`).
+* **`validate-commits` range** — with no `ignore-commits-before`, the check now
+  covers the commits since the previous release tag instead of the whole
+  history, so commits predating Conventional Commits are not reported on every
+  run.
 * **`validate-commit-messages`** — defaults to `false`. Upstream always failed
   the build on the first malformed commit message, which makes adoption
   impossible for a repository with pre-existing history. Set it to `true` to
