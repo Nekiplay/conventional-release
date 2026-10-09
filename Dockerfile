@@ -8,6 +8,12 @@ RUN set -eux; \
 	git-sv --help >/dev/null || [ $? -eq 1 ]
 
 COPY bin/* /usr/local/bin/
+# Explicit chmod: a checkout that lost the executable bit (e.g. on Windows)
+# would otherwise leave the entrypoints non-executable in the image.
+RUN chmod +x /usr/local/bin/prepare-release \
+	&& chmod +x /usr/local/bin/complete-release \
+	&& chmod +x /usr/local/bin/validate-commits \
+	&& chmod +x /usr/local/bin/generate-changelog
 COPY config.yml /gitsv-home/.gitsv/
 ENV HOME=/gitsv-home
 # GitHub Actions requires UID 1001

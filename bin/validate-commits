@@ -16,6 +16,23 @@ set -eu
 
 : ${IGNORE_COMMITS_BEFORE:=}
 : ${VALIDATE_COMMIT_MESSAGES:=false}
+: ${TAG_PREFIX:=v}
+
+# Without an explicit SHA, validate the commits that the release notes are
+# generated from: everything since the previous release tag. Validating the
+# whole history would report the commits that predate Conventional Commits on
+# every single run, which trains people to ignore the output.
+if [ -z "$IGNORE_COMMITS_BEFORE" ]; then
+	IGNORE_COMMITS_BEFORE="$(git tag --merged HEAD --sort=-creatordate \
+		| grep -E "^${TAG_PREFIX}[0-9]+(\.[0-9]+)*" \
+		| head -n 1 || true)"
+fi
+
+if [ -n "$IGNORE_COMMITS_BEFORE" ]; then
+	echo "Validating commit messages since $IGNORE_COMMITS_BEFORE"
+else
+	echo 'No previous tag found, validating the whole history'
+fi
 
 COMMITLOG="$(git-sv commit-log -r hash -s "$IGNORE_COMMITS_BEFORE")"
 
