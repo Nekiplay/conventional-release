@@ -20,6 +20,23 @@ inputs:
     default: false
   ignore-commits-before:
     description: The commit SHA to start the commit message validation from
+  manual-version:
+    description: |
+      Release this exact version instead of deriving it from the commit log.
+      Accepts any number of dot-separated numeric segments (e.g. 2.0.4, 2.0.4.2.1)
+      with an optional prerelease suffix. When set, the workflow does not need to
+      be triggered by a tag push, which allows workflow_dispatch driven releases.
+  validate-commit-messages:
+    description: |
+      If 'true', fail the build when a commit message does not follow Conventional
+      Commits. If 'false' (default), such commits are only reported and end up in
+      the 'Other Changes' section of the release notes. Required for repositories
+      that adopted Conventional Commits after their initial commits.
+    default: false
+  github-release-title:
+    description: |
+      Title of the GitHub Release. Defaults to the tag name.
+      Supports the '%s' placeholder, replaced with the release version.
   commit-files:
     description: |
       Create a new commit including the specified files and tag it.
@@ -63,12 +80,15 @@ runs:
   post-entrypoint: complete-release
   env:
     IGNORE_COMMITS_BEFORE: ${{ inputs.ignore-commits-before }}
+    VALIDATE_COMMIT_MESSAGES: ${{ inputs.validate-commit-messages }}
+    MANUAL_VERSION: ${{ inputs.manual-version }}
     RELEASE_BRANCH: ${{ inputs.release-branch }}
     GIT_TOKEN: ${{ inputs.token }}
     GIT_REF: ${{ inputs.ref }}
     ENABLED: ${{ inputs.enabled }}
     COMMIT_FILES: ${{ inputs.commit-files }}
     GITHUB_RELEASE_ENABLED: ${{ inputs.github-release-enabled }}
+    GITHUB_RELEASE_TITLE: ${{ inputs.github-release-title }}
     GITHUB_RELEASE_DRAFT: ${{ inputs.github-release-draft }}
     GITHUB_RELEASE_PRERELEASE: ${{ inputs.github-release-prerelease }}
     GITHUB_RELEASE_LATEST: ${{ inputs.github-release-latest }}

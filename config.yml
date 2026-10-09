@@ -7,6 +7,11 @@ tag:
   pattern: "v%d.%d.%d"
   filter: "v*.*.*"
 
+commit-message:
+  # `generate-changelog` uses this list to decide which commits are user-facing.
+  # Kept in sync with the sections below so both code paths agree.
+  types: [build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test]
+
 release-notes:
   sections:
   - name: Features
@@ -15,8 +20,11 @@ release-notes:
   - name: Bug Fixes
     section-type: commits
     commit-types: [fix]
-  - name: Misc
+  - name: Performance
     section-type: commits
-    commit-types: [build]
+    commit-types: [perf]
+  - name: Other Changes
+    section-type: commits
+    commit-types: [build, chore, ci, docs, refactor, revert, style, test]
   - name: Breaking Changes
     section-type: breaking-changes

@@ -5,11 +5,40 @@ A GitHub Action to automate releases based on [Conventional Commits](https://www
 ## Features
 
 * Supports fully automated releases driven by Conventional Commits.
-* Allows to disable automated versioning in favour of manually pushing tags (`auto-release: false`).
-* Enforces [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) format within commit messages.
+* Allows to disable automated versioning in favour of manually pushing tags (`auto-release: false`) or of passing the version explicitly (`manual-version`).
+* Supports version schemes with more than three components (e.g. `2.0.4.2.1`), which plain semver cannot express.
+* Reports non-conventional commit messages without blocking the release (`validate-commit-messages: false`).
 * Recovers from a failed release build automatically (when the next commit is pushed).
 * Allows to use the same workflow/job definition for both pull request and release builds.
 * Fails builds that leave uncommitted changes.
+
+## Fork changes
+
+This fork differs from `mgoltzsche/conventional-release` in the following ways.
+
+* **`manual-version`** — releases an explicit version instead of deriving one
+  from the commit log. This makes `workflow_dispatch` driven releases possible,
+  since upstream only recognised a release when the workflow was triggered by a
+  tag push.
+* **Version formats** — `manual-version` accepts any number of dot-separated
+  numeric segments with an optional prerelease. Upstream only accepted 1 to 3
+  components.
+* **`generate-changelog`** — a new script renders the release notes. Upstream
+  used `git-sv release-notes`, which resolves the version through
+  [Masterminds semver](https://github.com/Masterminds/semver) and therefore
+  fails on versions such as `2.0.4.2.1`. The new script only needs the commit
+  range, resolves it with plain `git`, and groups commits into **Breaking
+  Changes / Features / Bug Fixes / Performance / Other Changes**. Commits that
+  do not follow Conventional Commits are listed under Other Changes rather than
+  dropped.
+* **`validate-commit-messages`** — defaults to `false`. Upstream always failed
+  the build on the first malformed commit message, which makes adoption
+  impossible for a repository with pre-existing history. Set it to `true` to
+  restore the strict behaviour.
+* **`github-release-title`** — a release title independent of the tag name,
+  supporting a `%s` placeholder for the version.
+* Release notes are passed to `gh release create` via `--notes-file` rather than
+  `--notes`, so multi-line markdown is not subject to shell quoting.
 
 ## Usage
 
@@ -84,6 +113,79 @@ jobs:
         echo Publishing $RELEASE_VERSION
         ...
 ```
+
+### Manually triggered release
+
+Use `manual-version` to release a version that you choose, e.g. from a
+`workflow_dispatch` input:
+
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number (e.g. 2.0.4.2.1)"
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - # ... build the artifacts to attach ...
+
+    - name: Create release
+      uses: Nekiplay/conventional-release@main
+      with:
+        manual-version: ${{ inputs.version }}
+        github-release-draft: true
+        github-release-title: "My Project ${{ inputs.version }}"
+        github-release-files: |
+          dist/my-app
+          dist/my-app-setup.exe
+```
+
+The Action creates and pushes the tag and creates the GitHub Release in its
+post step, so it must be the **last** step of the job. A tag that already exists
+makes the Action fail rather than silently retag a published release.
+
+### Changelog format
+
+`generate-changelog` produces:
+
+```markdown
+Full changelog: [v2.0.4.1...v2.0.4.2.1](https://github.com/owner/repo/compare/v2.0.4.1...v2.0.4.2.1)
+
+## Breaking Changes
+
+- **cli**: drop the legacy --quick flag ([1234567](https://github.com/owner/repo/commit/...))
+
+## Features
+
+- add arm64 installer for Windows ([2345678](https://github.com/owner/repo/commit/...))
+
+## Bug Fixes
+
+- guard against an empty program list ([3456789](https://github.com/owner/repo/commit/...))
+
+## Performance
+
+- parallelize directory scanning ([4567890](https://github.com/owner/repo/commit/...))
+
+## Other Changes
+
+- bump deps ([5678901](https://github.com/owner/repo/commit/...))
+```
+
+`perf` gets its own section; every other type except `feat` and `fix` goes to
+Other Changes. Commits carrying `[skip ci]` are omitted.
 
 The [workflow used to publish this Action](./.github/workflows/workflow.yaml) is another example that shows how to release a container image, add a release commit and force-push a major version tag.
 

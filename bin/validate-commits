@@ -1,20 +1,39 @@
 #!/bin/sh
 
+# Validates Conventional Commit message headers.
+#
+# Unlike the upstream version this script only reports malformed messages; it
+# does not fail the job. A repository that adopted Conventional Commits partway
+# through its history still has legacy commits ("Auto format code", "Fix
+# encoding", ...) and refusing to release because of them blocks the project
+# entirely.
+#
+# Environment:
+#   IGNORE_COMMITS_BEFORE   commit SHA to start the validation from
+#   VALIDATE_COMMIT_MESSAGES  'true' to fail on malformed messages (default false)
+
 set -eu
 
 : ${IGNORE_COMMITS_BEFORE:=}
+: ${VALIDATE_COMMIT_MESSAGES:=false}
 
 COMMITLOG="$(git-sv commit-log -r hash -s "$IGNORE_COMMITS_BEFORE")"
-JQQUERY='.[] | select(.message.type==null and (.message.description | test("^Merge ((remote-tracking )?branch|pull request|[^ ]+ into [^ ]+)") | not)) | "\u274c ERROR: Commit "+.hash
-	+" has malformed message:\n\n  "+.message.description+"\n\n"'
-ERRORS="$(echo "$COMMITLOG" | jq -sr "$JQQUERY")"
 
-if [ "$ERRORS" ]; then
-	printf '\n%s\n\n' "$ERRORS" >&2
-	echo "Please use Conventional Commits!" >&2
-	echo "See https://www.conventionalcommits.org/en/v1.0.0/" >&2
-	echo "To ignore older commits, you can specify IGNORE_COMMITS_BEFORE." >&2
+JQQUERY='.[] | select(.message.type==null and (.message.description | test("^Merge ((remote-tracking )?branch|pull request|[^ ]+ into [^ ]+)") | not)) | "\u274c WARNING: Commit "+.hash
+	+" does not follow Conventional Commits:\n\n  "+.message.description+"\n\n"'
+
+WARNINGS="$(echo "$COMMITLOG" | jq -sr "$JQQUERY")"
+
+if [ "$WARNINGS" ]; then
+	printf '%s\n' "$WARNINGS" >&2
+	echo "These commits will be listed under 'Other Changes' in the release notes." >&2
+fi
+
+if [ "$VALIDATE_COMMIT_MESSAGES" = true ] && [ "$WARNINGS" ]; then
+	echo 'Please use Conventional Commits!' >&2
+	echo 'See https://www.conventionalcommits.org/en/v1.0.0/' >&2
+	echo 'To ignore older commits, set ignore-commits-before.' >&2
 	exit 1
 fi
 
-printf '\xE2\x9C\x94 %s\n' 'Commit messages are valid.'
+printf '\xE2\x9C\x94 %s\n' 'Commit messages checked.'

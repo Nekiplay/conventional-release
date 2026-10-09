@@ -2,31 +2,74 @@
 
 set -eu
 
+: ${RELEASE_BRANCH:=main}
+: ${TAG_PREFIX:=v}
+: ${MANUAL_VERSION:=}
+: ${VALIDATE_COMMIT_MESSAGES:=false}
+
 validate-commits
 echo
 
-: ${RELEASE_BRANCH:=main}
-
-TAG_PREFIX=v
 COMMIT="$(git rev-parse --short HEAD)"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-CURVER="$(git-sv current-version)"
-NXTVER="$(git-sv next-version)"
-CHANGELOG="$(git-sv release-notes)"
 ISRELEASE=
 ISPUSHTAG=false
+GIT_TAG=
 
-if echo "$GIT_REF" | grep -Eq '^refs/tags/'"${TAG_PREFIX}"'[0-9]+(\.[0-9]+(\.[0-9]+)?)?(-[a-z0-9\.\-_]+)?$'; then
+# A version may be any dot-separated numeric segments plus an optional
+# prerelease. Upstream only accepted 1-3 components, which excluded version
+# schemes such as 2.0.4.2.1.
+VERSION_RE='^[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.-]+)?$'
+
+# The previous release tag is resolved here instead of via `git-sv
+# current-version`, because that command parses the tag with semver and fails on
+# versions with more than three components.
+PREV_TAG="$(git tag --merged HEAD --sort=-creatordate \
+	| grep -E "^${TAG_PREFIX}[0-9]+(\.[0-9]+)*" \
+	| head -n 1 || true)"
+
+if [ -n "$MANUAL_VERSION" ]; then
+	# Version was provided explicitly (e.g. a workflow_dispatch input).
+	if ! echo "$MANUAL_VERSION" | grep -Eq "$VERSION_RE"; then
+		echo "ERROR: '$MANUAL_VERSION' is not a valid version." >&2
+		exit 1
+	fi
+
+	NXTVER="$MANUAL_VERSION"
+	GIT_TAG="${TAG_PREFIX}${NXTVER}"
+
+	if git rev-parse -q --verify "refs/tags/$GIT_TAG" >/dev/null; then
+		echo "ERROR: tag $GIT_TAG already exists." >&2
+		exit 1
+	fi
+
+	if [ "$PREV_TAG" = "$GIT_TAG" ]; then
+		PREV_TAG=''
+	fi
+
+	ISRELEASE=true
+	ISPUSHTAG="$TAG_PUSH_ENABLED"
+
+	git config user.name "${GITHUB_ACTOR}"
+	git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+
+	git tag -a "$GIT_TAG" -m "Version $NXTVER"
+elif echo "$GIT_REF" | grep -Eq "^refs/tags/${TAG_PREFIX}[0-9]+(\.[0-9]+)*(-[a-z0-9.\-_]+)?$"; then
 	# Derive version from manually pushed tag
-	NXTVER=$(echo "$GIT_REF" | sed -E 's!^refs/tags/'"${TAG_PREFIX}"'([0-9]+(\.[0-9]+(\.[0-9]+)?)?(-[a-z0-9\.\-_]+)?)$!\1!')
-	GIT_TAG="${TAG_PREFIX}$NXTVER"
+	NXTVER=$(echo "$GIT_REF" | sed -E "s!^refs/tags/${TAG_PREFIX}([0-9]+(\.[0-9]+)*(-[a-z0-9.\-_]+)?)$!\1!")
+	GIT_TAG="${TAG_PREFIX}${NXTVER}"
 
 	ISRELEASE=true
 	ISPUSHTAG=false
 elif [ "$RELEASE_BRANCH" = "$BRANCH" -a "$AUTO_RELEASE" = true ]; then
-	if [ "$CURVER" = "$NXTVER" ] || [ "$(echo "$CHANGELOG" | wc -l)" -eq 1 ]; then
+	# Version derived from the commit log. Requires semver-compatible tags.
+	CURVER="$(git-sv current-version)"
+	NXTVER="$(git-sv next-version)"
+
+	if [ "$CURVER" = "$NXTVER" ] || [ "$(git-sv release-notes | wc -l)" -eq 1 ]; then
 		echo 'Skipping release since no commit found that needs to be released'
 		echo
+		NXTVER="$(printf %s-dev-%s "$NXTVER" "$COMMIT")"
 	else
 		ISRELEASE=true
 		ISPUSHTAG="$TAG_PUSH_ENABLED"
@@ -34,30 +77,33 @@ elif [ "$RELEASE_BRANCH" = "$BRANCH" -a "$AUTO_RELEASE" = true ]; then
 		git config user.name "${GITHUB_ACTOR}"
 		git config user.email "${GITHUB_ACTOR}@users.noreply.github.com"
 
-		GIT_TAG="${TAG_PREFIX}$NXTVER"
-		MSG="$(printf 'chore(release): %s [skip ci]\n\n%s\n' "$NXTVER" "$CHANGELOG")"
+		GIT_TAG="${TAG_PREFIX}${NXTVER}"
+		MSG="$(printf 'chore(release): %s [skip ci]\n\n' "$NXTVER")"
+		CHANGELOG="$(git-sv release-notes)"
 		git tag -a "$GIT_TAG" -m "$MSG"
 	fi
 else
+	CURVER="$(git-sv current-version 2>/dev/null || echo '0.0.0')"
+	NXTVER="$(git-sv next-version 2>/dev/null || echo '0.0.0')"
 	NXTVER="$(printf %s-dev-%s "$NXTVER" "$COMMIT")"
 
 	REASON="not on the release branch '$RELEASE_BRANCH' but '$BRANCH'"
-	[ "$AUTO_RELEASE" = true ] || REASON='auto-release=false and no matching tag was pushed manually'
+	[ "$AUTO_RELEASE" = true ] || REASON='auto-release=false and no version was provided'
 	echo "Skipping release since $REASON"
 	echo
 fi
 
 # Detect insecure credential usage
 if grep -q AUTHORIZATION: .git/config; then
-	echo '::warning title=Credentials persisted within .git/config::Storing git credentials within .git/config grants write access to all subsequent job steps! To reduce the attack surface, this should be avoided by e.g. using actions/checkout@v3 with `persist-credentials: false`.'
+	echo '::warning title=Credentials persisted within .git/config::Storing git credentials within .git/config grants write access to all subsequent job steps! To reduce the attack surface, this should be avoided by e.g. not using actions/checkout with persist-credentials: false.'
 fi
 
-if [ "$(git tag -l "${TAG_PREFIX}${NXTVER}")" ]; then
-	CHANGELOG="$(git-sv release-notes -t "${TAG_PREFIX}${NXTVER}")"
+if [ -n "$GIT_TAG" ]; then
+	CHANGELOG="$(generate-changelog "$NXTVER" "$PREV_TAG")"
 fi
 
 # Set GitHub Action state (post-entrypoint to receive as env vars with prefix STATE_)
-CHANGELOG_BASE64="$(echo "$CHANGELOG" | base64 -w 0)"
+CHANGELOG_BASE64="$(echo "${CHANGELOG:-}" | base64 -w 0)"
 echo "VERSION=$NXTVER"             >> $GITHUB_STATE
 echo "PUBLISH=$ISRELEASE"          >> $GITHUB_STATE
 echo "PUSHTAG=$ISPUSHTAG"          >> $GITHUB_STATE
@@ -74,7 +120,7 @@ echo "RELEASE_PUBLISH=$ISRELEASE" >> $GITHUB_ENV
 echo "version: $NXTVER"
 echo "publish: $ISRELEASE"
 
-if [ "$(echo "$CHANGELOG" | wc -l)" -gt 1 ]; then
+if [ "$(echo "${CHANGELOG:-}" | wc -l)" -gt 1 ]; then
 	echo
 	echo "CHANGELOG:"
 	echo "$CHANGELOG"

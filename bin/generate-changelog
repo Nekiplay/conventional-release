@@ -1,0 +1,178 @@
+#!/bin/sh
+
+# Renders GitHub-flavoured markdown release notes from Conventional Commits.
+#
+# Usage: generate-changelog <version> [previous-tag]
+#
+# Why this script exists instead of `git-sv release-notes`:
+# git-sv resolves the previous tag and the new version through Masterminds
+# semver, which rejects versions with more than three numeric components
+# (e.g. `2.0.4.2.1`). Only the tag range is actually needed to render the
+# notes, so the range is resolved here with plain git and the commits are
+# grouped by their Conventional Commit type.
+#
+# Environment:
+#   TAG_PREFIX   prefix used by the release tags (default: v)
+#   SERVER_URL   git server base URL (default: https://github.com)
+#   REPOSITORY   "owner/name", enables short links to each commit
+
+set -eu
+
+VERSION="${1:-}"
+PREV_TAG="${2:-}"
+
+: "${TAG_PREFIX:=v}"
+: "${SERVER_URL:=https://github.com}"
+: "${REPOSITORY:=}"
+
+GIT_TAG="${TAG_PREFIX}${VERSION}"
+
+# Resolve the tag the release notes are counted from. The tag being released is
+# excluded so that re-running a release still reports the full range instead of
+# an empty one.
+if [ -z "$PREV_TAG" ]; then
+	PREV_TAG="$(git tag --merged HEAD --sort=-creatordate \
+		| grep -vxF "$GIT_TAG" \
+		| head -n 1 || true)"
+fi
+
+if [ -n "$PREV_TAG" ]; then
+	RANGE="${PREV_TAG}..HEAD"
+else
+	RANGE="HEAD"
+fi
+
+echo "Generating changelog for ${VERSION:-HEAD} from range '${RANGE}'"
+
+# Records are delimited by \036 (record separator) and their fields by \037
+# (unit separator) so that multi-line commit bodies survive intact.
+git log --no-merges --pretty=format:'%H%x1f%s%x1f%b%x1e' "$RANGE" | awk \
+	-v server="$SERVER_URL" \
+	-v repo="$REPOSITORY" \
+	-v currtag="$GIT_TAG" \
+	-v prevtag="$PREV_TAG" '
+function trim(s) {
+	sub(/^[ \t\r\n]+/, "", s)
+	sub(/[ \t\r\n]+$/, "", s)
+	return s
+}
+
+function section(title, arr, n,   i) {
+	if (n == 0) {
+		return
+	}
+	printf "## %s\n\n", title
+	for (i = 1; i <= n; i++) {
+		printf "%s\n", arr[i]
+	}
+	printf "\n"
+}
+
+function item(scope, desc, hash,   out) {
+	out = "- "
+	if (scope != "") {
+		out = out "**" scope "**: "
+	}
+	out = out desc
+	if (repo != "") {
+		out = out " ([" substr(hash, 1, 7) "](" server "/" repo "/commit/" hash "))"
+	}
+	return out
+}
+
+BEGIN {
+	RS = "\036"
+	FS = "\037"
+	nb = nf = nx = np = no = 0
+}
+
+{
+	# git appends a newline after every record, so the first field of each
+	# record after the first one starts with a line break.
+	hash = trim($1)
+	subject = trim($2)
+	body = $3
+
+	# Release commits are bookkeeping, not user-facing changes.
+	if (subject ~ /\[skip ci\]/) {
+		next
+	}
+
+	# Split "type(scope)!: description" without non-POSIX regex captures.
+	hdr = ""
+	desc = trim(subject)
+	p = index(subject, ": ")
+	if (p > 0) {
+		hdr = substr(subject, 1, p - 1)
+		desc = trim(substr(subject, p + 2))
+	}
+
+	bang = 0
+	if (length(hdr) > 0 && substr(hdr, length(hdr), 1) == "!") {
+		bang = 1
+		hdr = substr(hdr, 1, length(hdr) - 1)
+	}
+
+	# Scope is delimited by an explicit pair of parentheses. Deriving its
+	# length from the string length is off by one, because the closing
+	# parenthesis is still part of the header at this point.
+	scope = ""
+	type = hdr
+	open_pos = index(hdr, "(")
+	close_pos = index(hdr, ")")
+	if (open_pos > 0 && close_pos > open_pos) {
+		scope = substr(hdr, open_pos + 1, close_pos - open_pos - 1)
+		type = substr(hdr, 1, open_pos - 1)
+	}
+	type = tolower(trim(type))
+	scope = trim(scope)
+
+	if (bang || body ~ /BREAKING[ -]CHANGE:/) {
+		nb++
+		breaking[nb] = item(scope, desc, hash)
+		next
+	}
+
+	if (type == "feat") {
+		nf++
+		feat[nf] = item(scope, desc, hash)
+		next
+	}
+
+	if (type == "fix") {
+		nx++
+		fix[nx] = item(scope, desc, hash)
+		next
+	}
+
+	if (type == "perf") {
+		np++
+		perf[np] = item(scope, desc, hash)
+		next
+	}
+
+	# Everything else (chore, docs, refactor, ci, ...) plus commits that predate
+	# Conventional Commits adoption. They are listed rather than dropped so the
+	# notes stay a complete record of what shipped.
+	no++
+	other[no] = item(scope, desc, hash)
+}
+
+END {
+	if (nb + nf + nx + np + no == 0) {
+		print "_No user-facing changes._\n"
+		exit 0
+	}
+
+	if (prevtag != "" && currtag != "" && repo != "") {
+		printf "Full changelog: [%s...%s](%s/%s/compare/%s...%s)\n\n", \
+			prevtag, currtag, server, repo, prevtag, currtag
+	}
+
+	section("Breaking Changes", breaking, nb)
+	section("Features", feat, nf)
+	section("Bug Fixes", fix, nx)
+	section("Performance", perf, np)
+	section("Other Changes", other, no)
+}
+'

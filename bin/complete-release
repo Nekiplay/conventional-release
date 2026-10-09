@@ -34,7 +34,7 @@ GIT_TAG="${TAG_PREFIX}$STATE_VERSION"
 CHANGELOG="$(echo "$STATE_CHANGELOG" | base64 -d)"
 
 # Configure git authentication.
-# To to able to run GHA's checkout Action v3 with `persist-credentials: false`,
+# To be able to run GHA's checkout Action with `persist-credentials: false`,
 # git credentials need to be configured here in a way that only steps/Actions
 # that have the github.token assigned explicitly can write into the repo.
 # This is for security purposes: the actual user-defined build logic should not
@@ -59,17 +59,6 @@ if [ "$STATE_PUSHTAG" = true ] || [ "$COMMIT_FILES" ]; then
 	git push origin "$GIT_TAG" --quiet --no-verify $OPTS
 fi
 
-if echo "$GIT_TAG" | grep -Eq '^'"$TAG_PREFIX"'([0-9]+)\.([0-9]+)\.([0-9]+)$'; then
-	if [ "$UPDATE_MAJOR_TAG" = true ]; then
-		MAJOR_GIT_TAG="$(echo "$GIT_TAG" | grep -Eo '^'"$TAG_PREFIX"'[0-9]+')"
-		echo "Updating major git tag $MAJOR_GIT_TAG"
-		git tag -a "$MAJOR_GIT_TAG" -m "$MAJOR_GIT_TAG" -f
-		git push origin "$MAJOR_GIT_TAG" --quiet --no-verify -f
-	fi
-else
-	GITHUB_RELEASE_LATEST=false
-fi
-
 if [ "$GITHUB_RELEASE_ENABLED" = true ]; then
 	echo "Creating GitHub release for tag $GIT_TAG"
 	export GH_TOKEN="$GIT_TOKEN"
@@ -77,5 +66,16 @@ if [ "$GITHUB_RELEASE_ENABLED" = true ]; then
 	[ ! "$GITHUB_RELEASE_LATEST" = true ] || OPTS=--latest
 	[ ! "$GITHUB_RELEASE_PRERELEASE" = true ] || OPTS=--prerelease
 	[ ! "$GITHUB_RELEASE_DRAFT" = true ] || OPTS=--draft
-	gh release create "$GIT_TAG" -t "$GIT_TAG" --notes="$CHANGELOG" $OPTS $GITHUB_RELEASE_FILES
+
+	# A custom title keeps the release header independent of the tag format,
+	# which matters when the version has more than three components.
+	# `%s` is replaced with the version so the title can be phrased freely.
+	TITLE="${GITHUB_RELEASE_TITLE:-$GIT_TAG}"
+	TITLE="$(printf '%s' "$TITLE" | sed "s/%s/$STATE_VERSION/g")"
+
+	# --notes-file avoids passing multi-line markdown through an argument.
+	NOTES_FILE="$(mktemp)"
+	echo "$CHANGELOG" > "$NOTES_FILE"
+
+	gh release create "$GIT_TAG" -t "$TITLE" --notes-file "$NOTES_FILE" $OPTS $GITHUB_RELEASE_FILES
 fi
