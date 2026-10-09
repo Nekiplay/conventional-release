@@ -37,6 +37,14 @@ inputs:
     description: |
       Title of the GitHub Release. Defaults to the tag name.
       Supports the '%s' placeholder, replaced with the release version.
+  github-release-notes-prepend:
+    description: |
+      Markdown placed at the very top of the release notes, above the generated
+      changelog. Useful for badges (downloads, version, CI status).
+      Supports the '%s' placeholder, replaced with the release version, so a
+      version badge does not have to be updated for every release.
+      Example:
+        '![Version](https://img.shields.io/badge/version-%s-blue)'
   commit-files:
     description: |
       Create a new commit including the specified files and tag it.
@@ -89,6 +97,7 @@ runs:
     COMMIT_FILES: ${{ inputs.commit-files }}
     GITHUB_RELEASE_ENABLED: ${{ inputs.github-release-enabled }}
     GITHUB_RELEASE_TITLE: ${{ inputs.github-release-title }}
+    GITHUB_RELEASE_NOTES_PREPEND: ${{ inputs.github-release-notes-prepend }}
     GITHUB_RELEASE_DRAFT: ${{ inputs.github-release-draft }}
     GITHUB_RELEASE_PRERELEASE: ${{ inputs.github-release-prerelease }}
     GITHUB_RELEASE_LATEST: ${{ inputs.github-release-latest }}

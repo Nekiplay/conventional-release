@@ -100,6 +100,15 @@ fi
 
 if [ -n "$GIT_TAG" ]; then
 	CHANGELOG="$(generate-changelog "$NXTVER" "$PREV_TAG")"
+
+	# Custom markdown (badges, a header, a warning) above the generated
+	# changelog. `%s` is the release version so that a version badge does not
+	# have to be updated by hand for every release. The value is passed to
+	# printf as an argument, never as a format string.
+	if [ -n "${GITHUB_RELEASE_NOTES_PREPEND:-}" ]; then
+		HEADER="$(printf '%s' "$GITHUB_RELEASE_NOTES_PREPEND" | sed "s/%s/$NXTVER/g")"
+		CHANGELOG="$(printf '%s\n\n%s' "$HEADER" "$CHANGELOG")"
+	fi
 fi
 
 # Set GitHub Action state (post-entrypoint to receive as env vars with prefix STATE_)

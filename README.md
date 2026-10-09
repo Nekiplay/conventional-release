@@ -43,6 +43,8 @@ This fork differs from `mgoltzsche/conventional-release` in the following ways.
   restore the strict behaviour.
 * **`github-release-title`** — a release title independent of the tag name,
   supporting a `%s` placeholder for the version.
+* **`github-release-notes-prepend`** — Markdown placed above the generated
+  changelog, for badges and headers. Also supports `%s` for the version.
 * Release notes are passed to `gh release create` via `--notes-file` rather than
   `--notes`, so multi-line markdown is not subject to shell quoting.
 
@@ -153,6 +155,9 @@ jobs:
         manual-version: ${{ inputs.version }}
         github-release-draft: true
         github-release-title: "My Project ${{ inputs.version }}"
+      github-release-notes-prepend: |
+        [![Version](https://img.shields.io/badge/version-%s-blue)](https://github.com/owner/repo/releases/tag/v%s)
+        [![Downloads](https://img.shields.io/github/downloads/owner/repo/v%s/total)](https://github.com/owner/repo/releases/tag/v%s)
         github-release-files: |
           dist/my-app
           dist/my-app-setup.exe
@@ -164,7 +169,11 @@ makes the Action fail rather than silently retag a published release.
 
 ### Changelog format
 
-`generate-changelog` produces:
+Anything set in `github-release-notes-prepend` appears first, followed by the
+changelog produced by `generate-changelog`:
+
+```markdown
+Full changelog: [v2.0.4.1...v2.0.4.2.1](https://github.com/owner/repo/compare/v2.0.4.1...v2.0.4.2.1)
 
 ```markdown
 Full changelog: [v2.0.4.1...v2.0.4.2.1](https://github.com/owner/repo/compare/v2.0.4.1...v2.0.4.2.1)
