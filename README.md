@@ -182,10 +182,39 @@ Full changelog: [v2.0.4.1...v2.0.4.2.1](https://github.com/owner/repo/compare/v2
 ## Other Changes
 
 - bump deps ([5678901](https://github.com/owner/repo/commit/...))
+
+## Commit history
+
+<details>
+<summary>92 commits, 37 of them automated</summary>
+
+| Commit | Author | Change |
+| --- | --- | --- |
+| [`2dfdbf8`](https://github.com/owner/repo/commit/...) | Roman Danilov | fix: guard against an empty program list |
+| [`cb1fd61`](https://github.com/owner/repo/commit/...) | github-actions[bot] | chore: apply rustfmt |
+
+</details>
 ```
 
 `perf` gets its own section; every other type except `feat` and `fix` goes to
 Other Changes. Commits carrying `[skip ci]` are omitted.
+
+Commits authored by automation accounts (`github-actions[bot]`, `dependabot`,
+`renovate`, anything whose name ends in `[bot]`) are excluded from the grouped
+sections — a commit such as `Auto format code` is not something a user needs to
+read about. They remain in the **Commit history** table, so nothing is hidden.
+Override the list with the `EXCLUDE_AUTHORS` environment variable, which takes
+space separated substrings matched against the author name and email:
+
+```yaml
+env:
+  EXCLUDE_AUTHORS: "[bot] github-actions dependabot"
+```
+
+Substrings are used rather than a regex because `[bot]` cannot be written as an
+awk regex: `\[` is not a valid escape, and awk turns it into a plain `[`, which
+silently reinterprets the pattern as a bracket expression that matches almost
+any name.
 
 The [workflow used to publish this Action](./.github/workflows/workflow.yaml) is another example that shows how to release a container image, add a release commit and force-push a major version tag.
 

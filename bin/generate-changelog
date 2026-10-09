@@ -15,6 +15,14 @@
 #   TAG_PREFIX   prefix used by the release tags (default: v)
 #   SERVER_URL   git server base URL (default: https://github.com)
 #   REPOSITORY   "owner/name", enables short links to each commit
+#   EXCLUDE_AUTHORS  space separated substrings; commits whose author name or
+#                    email contains any of them are left out of the grouped
+#                    sections (default: bot accounts). The commit history table
+#                    at the end always lists them.
+#                    Substrings, not a regex: `[bot]` cannot be written as an
+#                    awk regex without `\[`, which awk reads as a plain `[` and
+#                    silently turns the whole pattern into a bracket
+#                    expression.
 
 set -eu
 
@@ -24,6 +32,9 @@ PREV_TAG="${2:-}"
 : "${TAG_PREFIX:=v}"
 : "${SERVER_URL:=https://github.com}"
 : "${REPOSITORY:=}"
+# Matches GitHub App and automation accounts. Deliberately does not match
+# `@users.noreply.github.com`, because real users commit under that domain too.
+: "${EXCLUDE_AUTHORS:=[bot] github-actions dependabot renovate}"
 
 GIT_TAG="${TAG_PREFIX}${VERSION}"
 
@@ -46,11 +57,12 @@ echo "Generating changelog for ${VERSION:-HEAD} from range '${RANGE}'"
 
 # Records are delimited by \036 (record separator) and their fields by \037
 # (unit separator) so that multi-line commit bodies survive intact.
-git log --no-merges --pretty=format:'%H%x1f%s%x1f%b%x1e' "$RANGE" | awk \
+git log --no-merges --pretty=format:'%H%x1f%aN%x1f%aE%x1f%s%x1f%b%x1e' "$RANGE" | awk \
 	-v server="$SERVER_URL" \
 	-v repo="$REPOSITORY" \
 	-v currtag="$GIT_TAG" \
-	-v prevtag="$PREV_TAG" '
+	-v prevtag="$PREV_TAG" \
+	-v excl="$EXCLUDE_AUTHORS" '
 function trim(s) {
 	sub(/^[ \t\r\n]+/, "", s)
 	sub(/[ \t\r\n]+$/, "", s)
@@ -68,35 +80,70 @@ function section(title, arr, n,   i) {
 	printf "\n"
 }
 
+function link(hash,   out) {
+	if (repo != "") {
+		return "[" substr(hash, 1, 7) "](" server "/" repo "/commit/" hash ")"
+	}
+	return substr(hash, 1, 7)
+}
+
 function item(scope, desc, hash,   out) {
 	out = "- "
 	if (scope != "") {
 		out = out "**" scope "**: "
 	}
-	out = out desc
-	if (repo != "") {
-		out = out " ([" substr(hash, 1, 7) "](" server "/" repo "/commit/" hash "))"
+	return out desc " (" link(hash) ")"
+}
+
+# A pipe would end the markdown table cell early.
+function cell(s) {
+	gsub(/\|/, "\\|", s)
+	return s
+}
+
+function isbot(name, mail,   i, n, m, tokens) {
+	n = tolower(name)
+	m = tolower(mail)
+	count = split(excl, tokens, /[ \t]+/)
+	for (i = 1; i <= count; i++) {
+		if (tokens[i] == "") {
+			continue
+		}
+		if (index(n, tokens[i]) > 0 || index(m, tokens[i]) > 0) {
+			return 1
+		}
 	}
-	return out
+	return 0
 }
 
 BEGIN {
 	RS = "\036"
 	FS = "\037"
 	nb = nf = nx = np = no = 0
+	nh = 0
+	nbot = 0
 }
 
 {
 	# git appends a newline after every record, so the first field of each
 	# record after the first one starts with a line break.
 	hash = trim($1)
-	subject = trim($2)
-	body = $3
+	author = trim($2)
+	mail = trim($3)
+	subject = trim($4)
+	body = $5
 
 	# Release commits are bookkeeping, not user-facing changes.
 	if (subject ~ /\[skip ci\]/) {
 		next
 	}
+
+	# Every commit is recorded in the history table, so a reviewer can always
+	# see what actually landed and open any diff.
+	nh++
+	hist_author[nh] = cell(author)
+	hist_subject[nh] = cell(subject)
+	hist_link[nh] = link(hash)
 
 	# Split "type(scope)!: description" without non-POSIX regex captures.
 	hdr = ""
@@ -126,6 +173,14 @@ BEGIN {
 	}
 	type = tolower(trim(type))
 	scope = trim(scope)
+
+	# Automation accounts are excluded from the curated sections: a commit
+	# such as "Auto format code" is not something a user needs to read about.
+	# They remain in the history table below.
+	if (isbot(author, mail)) {
+		nbot++
+		next
+	}
 
 	if (bang || body ~ /BREAKING[ -]CHANGE:/) {
 		nb++
@@ -159,7 +214,7 @@ BEGIN {
 }
 
 END {
-	if (nb + nf + nx + np + no == 0) {
+	if (nh == 0) {
 		print "_No user-facing changes._\n"
 		exit 0
 	}
@@ -169,10 +224,33 @@ END {
 			prevtag, currtag, server, repo, prevtag, currtag
 	}
 
-	section("Breaking Changes", breaking, nb)
-	section("Features", feat, nf)
-	section("Bug Fixes", fix, nx)
-	section("Performance", perf, np)
-	section("Other Changes", other, no)
+	if (nb + nf + nx + np + no == 0) {
+		printf "_No user-facing changes in this release._\n\n"
+	} else {
+		section("Breaking Changes", breaking, nb)
+		section("Features", feat, nf)
+		section("Bug Fixes", fix, nx)
+		section("Performance", perf, np)
+		section("Other Changes", other, no)
+	}
+
+	# Full audit trail: every commit in the range, including the automated ones
+	# left out of the sections above. Collapsed so it does not drown the notes.
+	if (nh > 0) {
+		print "## Commit history\n"
+		print "<details>"
+		if (nbot > 0) {
+			printf "<summary>%d commits, %d of them automated</summary>\n\n", nh, nbot
+		} else {
+			printf "<summary>All %d commits</summary>\n\n", nh
+		}
+		print "| Commit | Author | Change |"
+		print "| --- | --- | --- |"
+		for (i = 1; i <= nh; i++) {
+			printf "| %s | %s | %s |\n", hist_link[i], hist_author[i], hist_subject[i]
+		}
+		print ""
+		print "</details>"
+	}
 }
 '
