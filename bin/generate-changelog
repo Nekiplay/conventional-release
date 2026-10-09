@@ -53,7 +53,10 @@ else
 	RANGE="HEAD"
 fi
 
-echo "Generating changelog for ${VERSION:-HEAD} from range '${RANGE}'"
+# On stderr, not stdout: this script's stdout is captured by prepare-release as
+# the release notes themselves, so a progress line printed here would be
+# published as the first line of the changelog.
+echo "Generating changelog for ${VERSION:-HEAD} from range '${RANGE}'" >&2
 
 # Records are delimited by \036 (record separator) and their fields by \037
 # (unit separator) so that multi-line commit bodies survive intact.
